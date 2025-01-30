@@ -1,12 +1,15 @@
 ﻿public class Program
 {
+    const int MaxLevel = 3;
+
     private static ConsoleColor originalBackgroundColor;
     private static ConsoleColor originalForegroundColor;
 
-    private static MazePoint playerCurrPos;
-    private static MazePoint monsterPos;
-    private static Tuple<MazePoint, MazePoint>? MonsterTarget;
-    private static List<MazeStep> monsterPath = [];
+    private static MazePoint playerPos;
+    private static int numMonsters;  // also the level number
+    private static MazePoint?[] monsterPos = new MazePoint?[MaxLevel];  // a point per monster (depending on the level)
+    private static Tuple<MazePoint, MazePoint>?[] MonsterTargets = new Tuple<MazePoint, MazePoint>?[MaxLevel];  // used for monster path calculation, a tuple per monster.
+    private static List<MazeStep>[] monsterPath = new List<MazeStep>[MaxLevel];  // a list of steps per monster
     private static object monsterPathCalcLock = new();
     private static bool AppShutdown = false;
     private static char[,] TheMaze = new char[1,1];
@@ -18,57 +21,56 @@
         
         originalBackgroundColor = Console.BackgroundColor;
         originalForegroundColor = Console.ForegroundColor;
-        Console.Clear();
 
         var maxX = Console.WindowWidth > 50 ? 50 : Console.WindowWidth-1;
         var maxY = Console.WindowHeight > 24 ? 24: Console.WindowHeight-2;
-        
-        bool [,] mazeData;
-
-        string mazeMode = args.Length > 0 ? args[0] : "";
-        if(mazeMode == "onepath")
-        {
-            // Make sure dimensions are odd, as per the requirements of this algorithm
-            if(maxX % 2 == 0)
-                maxX--;
-
-            if(maxY % 2 == 0)
-                maxY--;
-
-            mazeData = MazeRecursiveGenerator.GenerateMaze(maxX, maxY);
-        }
-        else
-        {
-            // Make sure dimensions are odd, as per the requirements of this algorithm
-            if(maxX % 2 == 0)
-                maxX--;
-
-            if(maxY % 2 == 0)
-                maxY--;
-
-            mazeData = MazeRecursiveGenerator.GenerateMaze(maxX, maxY, MazeRecursiveGenerator.MazeMode.Loops);
-        }
-
-        TheMaze = MazeUtils.ConvertToCharMaze(mazeData);
-
-        DisplayMaze(TheMaze);
-
-        // Initial positions
-        playerCurrPos = new MazePoint(0, 1);
-        monsterPos =  new MazePoint(maxX-1, maxY-2);
 
         var monsterCalcThread = new Thread(CalculateMonsterPath);
         monsterCalcThread.Start();
-        lock(monsterPathCalcLock)
-        {
-            MonsterTarget = new(playerCurrPos, monsterPos);
-        }
 
+        bool quitGame = false;
+        while(!quitGame)
+        {
+            for(numMonsters = 1; numMonsters <= MaxLevel; numMonsters++)
+            {
+                MakeMaze(maxX, maxY);
+                DisplayMaze(TheMaze, numMonsters);
+
+                // Initial positions
+                playerPos = new MazePoint(0, 1);
+                monsterPos[0] = new MazePoint(TheMaze.GetLength(0)-1, TheMaze.GetLength(1)-2);
+                monsterPos[1] = numMonsters > 1 ? new MazePoint(1, TheMaze.GetLength(1)-2) : null;
+                monsterPos[2] = numMonsters > 2 ? new MazePoint(TheMaze.GetLength(0)-2, 1) : null;
+
+                lock(monsterPathCalcLock)
+                {
+                    for(int i = 0; i < numMonsters; i++)
+                    {
+                        MonsterTargets[i] = new(playerPos, monsterPos[i]!.Value);
+                    }
+                }
+
+                quitGame = PlayLevel();
+                if(quitGame)
+                    break;
+            }
+
+
+        }
+        CleanupHandler(null, null);
+        AppShutdown = true;
+    }
+
+    protected static bool PlayLevel()
+    {
         int loopCount = 0;
         while(true)
         {
-            ShowEntity(playerCurrPos, loopCount % 20 < 10 ? 'P' : 'p', ConsoleColor.Green);
-            ShowEntity(monsterPos, loopCount % 50 < 25 ? 'M' : 'm', ConsoleColor.Red);
+            ShowEntity(playerPos, loopCount % 20 < 10 ? 'P' : 'p', ConsoleColor.Green);
+            for(int i = 0; i < numMonsters; i++)
+            {
+                ShowEntity(monsterPos[i]!.Value, loopCount % 50 < 25 ? 'M' : 'm', ConsoleColor.Red);
+            }
 
             if(Console.KeyAvailable)
             {
@@ -76,83 +78,94 @@
 
                 if(userAction == EntityAction.Quit)
                 {
-                    CleanupHandler(null, null);
-                    AppShutdown = true;
-                    return;
+                    return true;
                 }
-                MazePoint playerOldPos = playerCurrPos;
-                (playerCurrPos, var validPlayerMove) = MazeUtils.MoveInDirection(userAction, playerCurrPos, TheMaze);
+
+                // Soak up any other keypresses (avoid key buffering)
+                while(Console.KeyAvailable)
+                {
+                    Console.ReadKey(true);
+                }
+
+                // Try to move the player, and start recalculating monster paths if the player does move
+                MazePoint playerOldPos = playerPos;
+                (playerPos, var validPlayerMove) = MazeUtils.MoveInDirection(userAction, playerPos, TheMaze);
                 if(validPlayerMove)
                 {
                     Console.SetCursorPosition(playerOldPos.X, playerOldPos.Y);
                     Console.ForegroundColor = ConsoleColor.Blue;
                     Console.Write(".");
                     
+                    // If the player is "outside of the border" on the right hand side, they've reached the one gap that is the exit.
+                    if(playerPos.X == TheMaze.GetLength(0)-1)  
+                    {
+                        return ShowLevelComplete();
+                    }
+
                     // Start a new calculation of the monster's path
                     lock(monsterPathCalcLock)
                     {
-                        MonsterTarget = new(playerCurrPos, monsterPos);
-                    }
-                }
-
-                if(playerCurrPos.X == maxX-1)  // getting "outside of the border" on the right hand side is the exit.
-                {
-                    ShowEntity(playerCurrPos, 'P', ConsoleColor.Green);  // Show the player at the exit.
-                    AppShutdown = true;
-                    Console.ForegroundColor = originalForegroundColor;
-                    Console.BackgroundColor = originalBackgroundColor;
-                    Console.SetCursorPosition((Console.WindowWidth-14)/2, Console.WindowHeight/2);
-                    Console.WriteLine("   You win!   ");
-                    Console.SetCursorPosition(0, Console.WindowHeight- 3);
-                    Console.WriteLine("Press ESC to exit");
-                    while(Console.ReadKey(true).Key != ConsoleKey.Escape) 
-                    {
-                        // waiting
-                    }
-                    return;
-                }
-            }
-
-            if(loopCount % 10 == 1)
-            {
-                // Move the monster towards the player
-                bool validMonsterMove;
-                lock(monsterPathCalcLock)
-                {
-                    if(monsterPath.Count > 0)
-                    {
-                        ShowEntity(monsterPos, ' ', ConsoleColor.Black);  // Clear where the monster was.
-                        (monsterPos, validMonsterMove) = MazeUtils.MoveInDirection(monsterPath.First().Direction, monsterPos, TheMaze);
-                        monsterPath.RemoveAt(0);
-                        if(!validMonsterMove) 
+                        for(int i = 0; i < numMonsters; i++)
                         {
-                            // Um, something went wrong with following the steps (bug in code).
-                            // issue a recalculate
-                            monsterPath = [];
-                            MonsterTarget = new(playerCurrPos, monsterPos);
+                            MonsterTargets[i] = new(playerPos, monsterPos[i]!.Value);
                         }
                     }
                 }
             }
 
-            if(playerCurrPos.X == monsterPos.X && playerCurrPos.Y == monsterPos.Y)
+            // Move the monsters slower than the player can move.
+            if(loopCount % 10 == 1)
             {
-                // Caught!
-                AppShutdown = true;
-                ShowEntity(playerCurrPos, 'X', ConsoleColor.Red);
-                Console.SetCursorPosition((Console.WindowWidth-14)/2, Console.WindowHeight/2);
-                Console.WriteLine("   You were caught!   ");
-                Console.SetCursorPosition(0, Console.WindowHeight- 3);
+                // Move the monster towards the player along the path calculated from the calculation thread.
+                bool validMonsterMove;
 
-                Console.ForegroundColor = originalForegroundColor;
-                Console.BackgroundColor = originalBackgroundColor;
-
-                Console.WriteLine("Press ESC to exit");
-                while(Console.ReadKey(true).Key != ConsoleKey.Escape) 
+                // Grab the "monster calculation lock" to prevent contention around monster paths changing.
+                //  this thread has priority, so it's ok to hold the lock longer than we have to.   The calculation
+                //  thread can just wait.
+                lock(monsterPathCalcLock)
                 {
-                    // waiting
+                    for(int i = 0; i < numMonsters; i++)
+                    {
+                        if(monsterPath[i] != null && monsterPath[i].Count > 0)
+                        {
+                            MazePoint newPos;
+                            ShowEntity(monsterPos[i]!.Value, ' ', ConsoleColor.Black);  // Clear where the monster was.
+                            (newPos, validMonsterMove) = MazeUtils.MoveInDirection(monsterPath[i].First().Direction, monsterPos[i]!.Value, TheMaze);
+                            monsterPos[i] = newPos;
+                            monsterPath[i].RemoveAt(0);
+                            if(!validMonsterMove) 
+                            {
+                                // Um, something went wrong with following the steps (bug in code).
+                                // issue a recalculate
+                                monsterPath[i] = [];
+                                MonsterTargets[i] = new(playerPos, monsterPos[i]!.Value);
+                            }
+                        }
+                    }
                 }
-                return;
+            }
+
+            // Check to see if any of the "active" monsters have reached the player.
+            for(int i = 0; i < numMonsters; i++)
+            {
+                if(playerPos.X == monsterPos[i]?.X && playerPos.Y == monsterPos[i]?.Y)
+                {
+                    // Caught!
+                    ShowEntity(playerPos, 'X', ConsoleColor.Red);
+                    Console.SetCursorPosition((Console.WindowWidth-14)/2, Console.WindowHeight/2);
+                    Console.WriteLine("   You were caught!   ");
+                    Console.SetCursorPosition(0, Console.WindowHeight- 3);
+
+                    Console.ForegroundColor = originalForegroundColor;
+                    Console.BackgroundColor = originalBackgroundColor;
+
+                    Console.WriteLine("Press ESC to exit");
+                    while(Console.ReadKey(true).Key != ConsoleKey.Escape) 
+                    {
+                        // waiting
+                    }
+                    return true;
+                }
             }
 
             loopCount++;  
@@ -162,16 +175,34 @@
         }
     }
 
+    protected static void MakeMaze(int maxX, int maxY)
+    {
+        bool [,] mazeData;
+
+        // Make sure dimensions are odd, as per the requirements of this algorithm
+        if(maxX % 2 == 0)
+            maxX--;
+
+        if(maxY % 2 == 0)
+            maxY--;
+
+        mazeData = MazeRecursiveGenerator.GenerateMaze(maxX, maxY, MazeRecursiveGenerator.MazeMode.Loops);
+        TheMaze = MazeUtils.ConvertToCharMaze(mazeData);
+    }
+
     protected static void ShowEntity(MazePoint entityPosition, char displayCharacter, ConsoleColor colour)
     {
+        // A small helper to show either the player, or the monsters (depending on the parameters provided).
         Console.ForegroundColor = colour;
         Console.SetCursorPosition(entityPosition.X, entityPosition.Y);
         Console.Write(displayCharacter);
     }
 
-    protected static void DisplayMaze(char [,] maze)
+    protected static void DisplayMaze(char [,] maze, int levelNumber)
     {
+        Console.Clear();
         Console.ForegroundColor = ConsoleColor.White;
+
         for(int y = 0; y < maze.GetLength(1); y++)
         {
             Console.SetCursorPosition(0,y);
@@ -183,9 +214,43 @@
         
         Console.SetCursorPosition(0,maze.GetLength(1));
         Console.ForegroundColor = ConsoleColor.Blue;
-        Console.WriteLine(" WASD or arrow keys to move.  Esc to quit.");
+        Console.WriteLine($" Lvl: {levelNumber}.  WASD or arrow keys to move.  Esc to quit.");
     }
 
+    protected static bool ShowLevelComplete()
+    {
+        ShowEntity(playerPos, 'P', ConsoleColor.Green);  // Show the player at the exit.
+                    
+        if(numMonsters < MaxLevel)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.SetCursorPosition((Console.WindowWidth-40)/2, Console.WindowHeight/2);
+            Console.WriteLine(" You escaped, ready for the next level? ");
+        }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.SetCursorPosition((Console.WindowWidth-14)/2, Console.WindowHeight/2);
+            Console.WriteLine("   You won!   ");
+        }
+        
+        Console.SetCursorPosition(0, Console.WindowHeight- 3);
+        Console.WriteLine("Press space to continue or Esc to exit");
+        
+        while(true)
+        {
+            var key = Console.ReadKey(true).Key;
+            switch(key)
+            {
+                case ConsoleKey.Escape:
+                    return true;
+                case ConsoleKey.Spacebar:
+                    return false;
+            }                        
+        }
+    }
+
+    // If "escape" or "control-c" is pressed, try to get the console window back into a clean state.
     protected static void CleanupHandler(object? sender, ConsoleCancelEventArgs? args)
     {
         Console.ForegroundColor = originalForegroundColor;
@@ -193,16 +258,31 @@
         Console.Clear();
     }
 
+    // The "main function" of the monster path calculation thread.  This runs for
+    //  the entire game, turning anything in the "monster targets" (per monster) array
+    //  into a path for the monster to travel to get to the player.
+    // A lock is used to obtain "what to calculate", and the same lock used to update the 
+    //  monster's path after the calculation is complete.   The Maze is only ever read, so
+    //  no lock is used to read the global maze data.
     public static void CalculateMonsterPath()
     {
         // Doing this in a separate thread, to avoid pausing game play.
         while(!AppShutdown)
         {
             Tuple<MazePoint, MazePoint>? pathToCalculate = null;
+            int monsterIndex = 0;
             lock(monsterPathCalcLock)
             {
-                pathToCalculate = MonsterTarget;
-                MonsterTarget = null;
+                for(int i = 0; i < numMonsters; i++)
+                {
+                    if(MonsterTargets[i] != null)
+                    {
+                        pathToCalculate = MonsterTargets[i];
+                        MonsterTargets[i] = null;
+                        monsterIndex = i;
+                        break;
+                    }
+                }
             }
 
             if(pathToCalculate != null)
@@ -210,10 +290,10 @@
                 var tmpPath = MazeUtils.FindPathToTarget(pathToCalculate.Item1, pathToCalculate.Item2, TheMaze);
                 lock(monsterPathCalcLock)
                 {
-                    monsterPath = tmpPath;
+                    monsterPath[monsterIndex] = tmpPath;
                 }
             }
-            Thread.Sleep(100);
+            Thread.Sleep(50);
         }
     }
 }
