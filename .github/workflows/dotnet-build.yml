@@ -71,4 +71,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Self contained EXE
-        path: bin/Release/net8.0/win-x86/publish/MonsterMaze.exe
+        path: ${{env.DOTNET_ROOT}}/bin/Release/net8.0/win-x86/publish/MonsterMaze.exe
