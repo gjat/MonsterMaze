@@ -66,9 +66,9 @@ jobs:
       env:
         Configuration: ${{ matrix.configuration }}
 
-    # Upload the output
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
+    # Release the output
+    - name: Create a release
+      uses: softprops/action-gh-release@v2
       with:
-        name: Self contained EXE
-        path: bin\Release\net8.0\win-x64\publish\*.exe
+        files: bin\Release\net8.0\win-x64\publish\*.exe
+        
