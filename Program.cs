@@ -1,16 +1,30 @@
 ﻿public class Program
 {
     const int MaxLevel = 3;
+    
+    // Find the available options in the "Character Map" windows system app
+    //  viewing the Lucida Console font
+    const char WallCharacter = '\u2588';
+    const char PlayerCharacterA = '\u263a';
+    const char PlayerCharacterB = '\u263b';
+    const char MonsterCharacterA = '\u25a0';
+    const char MonsterCharacterB = '\u2666';
+    const char CaughtCharacter = '\u25d8';
 
+    // Save console colours, to restore state after the game ends.
     private static ConsoleColor originalBackgroundColor;
     private static ConsoleColor originalForegroundColor;
 
+    // Global game state.
     private static MazePoint playerPos;
     private static int numMonsters;  // also the level number
-    private static MazePoint?[] monsterPos = new MazePoint?[MaxLevel];  // a point per monster (depending on the level)
-    private static Tuple<MazePoint, MazePoint>?[] MonsterTargets = new Tuple<MazePoint, MazePoint>?[MaxLevel];  // used for monster path calculation, a tuple per monster.
-    private static List<MazeStep>[] monsterPath = new List<MazeStep>[MaxLevel];  // a list of steps per monster
+
+    // When accessing the following, obtain the lock first.
     private static object monsterPathCalcLock = new();
+    private static MazePoint?[] monsterPos = new MazePoint?[MaxLevel];  // a point per monster (depending on the level)
+    private static Tuple<MazePoint, MazePoint>?[] MonsterTargets = new Tuple<MazePoint, MazePoint>?[MaxLevel];  // used to start monster path calculations, a tuple per monster.
+    private static List<MazeStep>[] monsterPath = new List<MazeStep>[MaxLevel];  // a list of steps per monster
+
     private static bool AppShutdown = false;
     private static char[,] TheMaze = new char[1,1];
     
@@ -34,7 +48,7 @@
             for(numMonsters = 1; numMonsters <= MaxLevel; numMonsters++)
             {
                 MakeMaze(maxX, maxY);
-                DisplayMaze(TheMaze, numMonsters);
+                DisplayMaze(TheMaze, levelNumber: numMonsters);
 
                 // Initial positions
                 playerPos = new MazePoint(0, 1);
@@ -66,10 +80,33 @@
         int loopCount = 0;
         while(true)
         {
-            ShowEntity(playerPos, loopCount % 20 < 10 ? 'P' : 'p', ConsoleColor.Green);
+            ShowEntity(playerPos, loopCount % 20 < 10 ? PlayerCharacterA : PlayerCharacterB, ConsoleColor.Green);
             for(int i = 0; i < numMonsters; i++)
             {
-                ShowEntity(monsterPos[i]!.Value, loopCount % 50 < 25 ? 'M' : 'm', ConsoleColor.Red);
+                ShowEntity(monsterPos[i]!.Value, loopCount % 50 < 25 ? MonsterCharacterA : MonsterCharacterB, ConsoleColor.Red);
+            }
+
+            // Check to see if any of the "active" monsters have reached the player.
+            for(int i = 0; i < numMonsters; i++)
+            {
+                if(playerPos.X == monsterPos[i]?.X && playerPos.Y == monsterPos[i]?.Y)
+                {
+                    // Caught!
+                    ShowEntity(playerPos, CaughtCharacter, ConsoleColor.Red);
+                    Console.SetCursorPosition((Console.WindowWidth-14)/2, Console.WindowHeight/2);
+                    Console.WriteLine("   You were caught!   ");
+                    Console.SetCursorPosition(0, Console.WindowHeight- 3);
+
+                    Console.ForegroundColor = originalForegroundColor;
+                    Console.BackgroundColor = originalBackgroundColor;
+
+                    Console.WriteLine("Press ESC to exit");
+                    while(Console.ReadKey(true).Key != ConsoleKey.Escape) 
+                    {
+                        // waiting
+                    }
+                    return true;
+                }
             }
 
             if(Console.KeyAvailable)
@@ -145,29 +182,6 @@
                 }
             }
 
-            // Check to see if any of the "active" monsters have reached the player.
-            for(int i = 0; i < numMonsters; i++)
-            {
-                if(playerPos.X == monsterPos[i]?.X && playerPos.Y == monsterPos[i]?.Y)
-                {
-                    // Caught!
-                    ShowEntity(playerPos, 'X', ConsoleColor.Red);
-                    Console.SetCursorPosition((Console.WindowWidth-14)/2, Console.WindowHeight/2);
-                    Console.WriteLine("   You were caught!   ");
-                    Console.SetCursorPosition(0, Console.WindowHeight- 3);
-
-                    Console.ForegroundColor = originalForegroundColor;
-                    Console.BackgroundColor = originalBackgroundColor;
-
-                    Console.WriteLine("Press ESC to exit");
-                    while(Console.ReadKey(true).Key != ConsoleKey.Escape) 
-                    {
-                        // waiting
-                    }
-                    return true;
-                }
-            }
-
             loopCount++;  
             if(loopCount > 100) 
                 loopCount = 0;
@@ -187,7 +201,7 @@
             maxY--;
 
         mazeData = MazeRecursiveGenerator.GenerateMaze(maxX, maxY, MazeRecursiveGenerator.MazeMode.Loops);
-        TheMaze = MazeUtils.ConvertToCharMaze(mazeData);
+        TheMaze = MazeUtils.ConvertToCharMaze(mazeData, WallCharacter);
     }
 
     protected static void ShowEntity(MazePoint entityPosition, char displayCharacter, ConsoleColor colour)
@@ -208,7 +222,7 @@
             Console.SetCursorPosition(0,y);
             for(int x = 0; x < maze.GetLength(0); x++)
             {
-                    Console.Write(maze[x,y]);    
+                Console.Write(maze[x,y]);    
             }
         }
         
@@ -219,7 +233,7 @@
 
     protected static bool ShowLevelComplete()
     {
-        ShowEntity(playerPos, 'P', ConsoleColor.Green);  // Show the player at the exit.
+        ShowEntity(playerPos, PlayerCharacterA, ConsoleColor.Green);  // Show the player at the exit.
                     
         if(numMonsters < MaxLevel)
         {
