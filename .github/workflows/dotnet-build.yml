@@ -71,4 +71,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Self contained EXE
-        path: bin\Release\net8.0\win-x86\publish
+        path: bin\Release\net8.0\win-x64\publish\*.exe
