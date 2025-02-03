@@ -22,13 +22,10 @@
     private static MazePoint playerPos;
     private static int numMonsters;  // also the level number
 
-    // When accessing the following, obtain the lock first.
-    private static object monsterPathCalcLock = new();
     private static MazePoint?[] monsterPos = new MazePoint?[MaxLevel];  // a point per monster (depending on the level)
-    private static Tuple<MazePoint, MazePoint>?[] MonsterTargets = new Tuple<MazePoint, MazePoint>?[MaxLevel];  // used to start monster path calculations, a tuple per monster.
     private static List<MazeStep>[] monsterPath = new List<MazeStep>[MaxLevel];  // a list of steps per monster
+    private static CancellationTokenSource[] monsterPathCalcCancel = new CancellationTokenSource[MaxLevel];
 
-    private static bool AppShutdown = false;
     private static char[,] TheMaze = new char[1,1];
     
     public static void Main(string[] args)
@@ -41,9 +38,6 @@
 
         var maxX = Console.WindowWidth > 50 ? 50 : Console.WindowWidth-1;
         var maxY = Console.WindowHeight > 24 ? 24: Console.WindowHeight-2;
-
-        var monsterCalcThread = new Thread(CalculateMonsterPath);
-        monsterCalcThread.Start();
 
         bool quitGame = false;
         while(!quitGame)
@@ -59,12 +53,9 @@
                 monsterPos[1] = numMonsters > 1 ? new MazePoint(1, TheMaze.GetLength(1)-2) : null;
                 monsterPos[2] = numMonsters > 2 ? new MazePoint(TheMaze.GetLength(0)-2, 1) : null;
 
-                lock(monsterPathCalcLock)
+                for(int i = 0; i < numMonsters; i++)
                 {
-                    for(int i = 0; i < numMonsters; i++)
-                    {
-                        MonsterTargets[i] = new(playerPos, monsterPos[i]!.Value);
-                    }
+                    StartMonsterPathCalculation(playerPos, i);
                 }
 
                 quitGame = PlayLevel();
@@ -75,7 +66,6 @@
 
         }
         CleanupHandler(null, null);
-        AppShutdown = true;
     }
 
     protected static bool PlayLevel()
@@ -143,12 +133,9 @@
                     }
 
                     // Start a new calculation of the monster's path
-                    lock(monsterPathCalcLock)
+                    for(int i = 0; i < numMonsters; i++)
                     {
-                        for(int i = 0; i < numMonsters; i++)
-                        {
-                            MonsterTargets[i] = new(playerPos, monsterPos[i]!.Value);
-                        }
+                        StartMonsterPathCalculation(playerPos, i);
                     }
                 }
             }
@@ -159,27 +146,21 @@
                 // Move the monster towards the player along the path calculated from the calculation thread.
                 bool validMonsterMove;
 
-                // Grab the "monster calculation lock" to prevent contention around monster paths changing.
-                //  this thread has priority, so it's ok to hold the lock longer than we have to.   The calculation
-                //  thread can just wait.
-                lock(monsterPathCalcLock)
+                for(int i = 0; i < numMonsters; i++)
                 {
-                    for(int i = 0; i < numMonsters; i++)
+                    if(monsterPath[i] != null && monsterPath[i].Count > 0)
                     {
-                        if(monsterPath[i] != null && monsterPath[i].Count > 0)
+                        MazePoint newPos;
+                        ShowEntity(monsterPos[i]!.Value, ' ', ConsoleColor.Black);  // Clear where the monster was.
+                        (newPos, validMonsterMove) = MazeUtils.MoveInDirection(monsterPath[i].First().Direction, monsterPos[i]!.Value, TheMaze);
+                        monsterPos[i] = newPos;
+                        monsterPath[i].RemoveAt(0);
+                        if(!validMonsterMove) 
                         {
-                            MazePoint newPos;
-                            ShowEntity(monsterPos[i]!.Value, ' ', ConsoleColor.Black);  // Clear where the monster was.
-                            (newPos, validMonsterMove) = MazeUtils.MoveInDirection(monsterPath[i].First().Direction, monsterPos[i]!.Value, TheMaze);
-                            monsterPos[i] = newPos;
-                            monsterPath[i].RemoveAt(0);
-                            if(!validMonsterMove) 
-                            {
-                                // Um, something went wrong with following the steps (bug in code).
-                                // issue a recalculate
-                                monsterPath[i] = [];
-                                MonsterTargets[i] = new(playerPos, monsterPos[i]!.Value);
-                            }
+                            // Um, something went wrong with following the steps (bug in code).
+                            // issue a recalculate
+                            monsterPath[i] = [];
+                            StartMonsterPathCalculation(playerPos, i);
                         }
                     }
                 }
@@ -275,42 +256,14 @@
         Console.Clear();
     }
 
-    // The "main function" of the monster path calculation thread.  This runs for
-    //  the entire game, turning anything in the "monster targets" (per monster) array
-    //  into a path for the monster to travel to get to the player.
-    // A lock is used to obtain "what to calculate", and the same lock used to update the 
-    //  monster's path after the calculation is complete.   The Maze is only ever read, so
-    //  no lock is used to read the global maze data.
-    public static void CalculateMonsterPath()
+    protected static void StartMonsterPathCalculation(MazePoint playerPos, int monsterIndex)
     {
-        // Doing this in a separate thread, to avoid pausing game play.
-        while(!AppShutdown)
+        if(monsterPathCalcCancel[monsterIndex] != null)
         {
-            Tuple<MazePoint, MazePoint>? pathToCalculate = null;
-            int monsterIndex = 0;
-            lock(monsterPathCalcLock)
-            {
-                for(int i = 0; i < numMonsters; i++)
-                {
-                    if(MonsterTargets[i] != null)
-                    {
-                        pathToCalculate = MonsterTargets[i];
-                        MonsterTargets[i] = null;
-                        monsterIndex = i;
-                        break;
-                    }
-                }
-            }
-
-            if(pathToCalculate != null)
-            {
-                var tmpPath = MazeUtils.FindPathToTarget(pathToCalculate.Item1, pathToCalculate.Item2, TheMaze);
-                lock(monsterPathCalcLock)
-                {
-                    monsterPath[monsterIndex] = tmpPath;
-                }
-            }
-            Thread.Sleep(50);
-        }
+            monsterPathCalcCancel[monsterIndex].Cancel();
+            monsterPathCalcCancel[monsterIndex].Dispose();
+        };
+        monsterPathCalcCancel[monsterIndex] = new CancellationTokenSource();
+        Task.Run(async () => monsterPath[monsterIndex] = await MazeUtils.FindPathToTargetAsync(playerPos, monsterPos[monsterIndex]!.Value, TheMaze, monsterPathCalcCancel[monsterIndex].Token));
     }
 }

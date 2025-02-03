@@ -32,7 +32,11 @@ public static class MazeUtils
         return new (newPos, true);
     }
 
-    public static List<MazeStep> FindPathToTarget(MazePoint targetPos, MazePoint currentPos, char[,] maze)
+// This is an intentional async background task, so suppress the warning.
+#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
+    public static async Task<List<MazeStep>> FindPathToTargetAsync(MazePoint targetPos, MazePoint currentPos,
+        char[,] maze, CancellationToken cancellationToken)
+#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
     {
         var directions = new List<EntityAction> { EntityAction.Left, EntityAction.Right, EntityAction.Up, EntityAction.Down };
         var queue = new Queue<MazeStep>();
@@ -42,7 +46,7 @@ public static class MazeUtils
         queue.Enqueue(new MazeStep(currentPos, EntityAction.None));
         visited.Add(currentPos);
 
-        while (queue.Count > 0)
+        while (queue.Count > 0 && !cancellationToken.IsCancellationRequested)
         {
             var currentStep = queue.Dequeue();
             var current = currentStep.Position;
