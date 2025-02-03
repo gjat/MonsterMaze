@@ -5,11 +5,14 @@
     // Find the available options in the "Character Map" windows system app
     //  viewing the Lucida Console font
     const char WallCharacter = '\u2588';
-    const char PlayerCharacterA = '\u263a';
-    const char PlayerCharacterB = '\u263b';
-    const char MonsterCharacterA = '\u25a0';
-    const char MonsterCharacterB = '\u2666';
-    const char CaughtCharacter = '\u25d8';
+    
+    // Windows 11 Cascadia Code font doesn't have smiley face characters.   Sigh.  
+    //  So going back to using standard text for the player and monsters.  
+    const char PlayerCharacterA = 'O';
+    const char PlayerCharacterB = 'o';
+    const char MonsterCharacterA = 'M';
+    const char MonsterCharacterB = 'm';
+    const char CaughtCharacter = 'X';
 
     // Save console colours, to restore state after the game ends.
     private static ConsoleColor originalBackgroundColor;
@@ -227,7 +230,7 @@
         }
         
         Console.SetCursorPosition(0,maze.GetLength(1));
-        Console.ForegroundColor = ConsoleColor.Blue;
+        Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine($" Lvl: {levelNumber}.  WASD or arrow keys to move.  Esc to quit.");
     }
 
@@ -248,7 +251,7 @@
             Console.WriteLine("   You won!   ");
         }
         
-        Console.SetCursorPosition(0, Console.WindowHeight- 3);
+        Console.SetCursorPosition((Console.WindowWidth-38)/2, (Console.WindowHeight/2)+2);
         Console.WriteLine("Press space to continue or Esc to exit");
         
         while(true)

@@ -1,15 +1,17 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <ApplicationIcon>monstermaze.ico</ApplicationIcon>
+    <Company></Company>
+    <Authors>Geoff Thompson (geoff.t.nz2 @ gmail.com)</Authors>
+    <Description>A console window game, where the player has to escape the maze while being chased by monsters.</Description>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <Optimize>True</Optimize>
     <PublishTrimmed>true</PublishTrimmed>
-    <PublishSingleFile>True</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
