@@ -62,14 +62,14 @@ jobs:
 
     # Build the app
     - name: Build the app
-      run: dotnet publish $env:Solution_Name -c $env:Configuration
+      run: dotnet publish $env:Solution_Name -c $env:Configuration --no-restore
       env:
         Configuration: ${{ matrix.configuration }}
 
     # Release the output
-    - name: Create a release
-      uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/')
-      with:
-        files: bin\Release\net8.0\win-x64\publish\*.exe
+    #- name: Create a release
+    #  uses: softprops/action-gh-release@v2
+    #  if: startsWith(github.ref, 'refs/tags/')
+    #  with:
+    #    files: bin\Release\net8.0\win-x64\publish\*.exe
         
